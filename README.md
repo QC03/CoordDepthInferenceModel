@@ -20,13 +20,7 @@ python -m pip install -r requirements.txt
 첫 실행 시 Pose Landmarker `.task` 파일을 자동으로 다운로드합니다. 직접 지정하려면
 `--pose-model` 옵션을 사용합니다.
 
-## 2. 테스트
-
-```cmd
-python -m pytest -q
-```
-
-## 3. 학습
+## 2. 학습
 
 `train/<subject>` 아래의 영상을 읽고, 같은 action의 `joints3d_25` JSON을 정답으로
 사용합니다. 2D 랜드마크는 각 영상 프레임에서 `.task` 모델로 검출합니다.
@@ -64,7 +58,7 @@ python -m pose_lifting.train ^
   --pose-model D:\models\pose_landmarker_lite.task
 ```
 
-## 4. ONNX 확인
+## 3. ONNX 확인
 
 학습이 끝나면 별도 export 없이 생성된 ONNX 파일을 확인할 수 있습니다.
 
@@ -76,7 +70,7 @@ python -m pose_lifting.compare_onnx ^
 
 ONNX 입력은 `B=1`, `224x224`로 고정됩니다.
 
-## 5. 실시간 추론
+## 4. 실시간 추론
 
 실시간 추론은 PyTorch나 `model.pth`가 아니라 ONNX 파일을 사용합니다.
 
@@ -128,7 +122,7 @@ python -m pose_lifting.realtime ^
 나란히 표시합니다. Y-Z 패널의 Z축은 모델이 추정한 root-relative depth입니다.
 `q` 키를 누르면 종료하며, 결과를 별도 파일로 저장하지는 않습니다.
 
-## 6. 좌표와 평가
+## 5. 좌표와 평가
 
 루트는 왼쪽·오른쪽 골반의 평균입니다.
 

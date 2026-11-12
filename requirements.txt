@@ -1,6 +1,5 @@
 torch>=2.1
 torchvision>=0.16
-pytest>=7
 numpy>=1.24
 mediapipe>=0.10
 opencv-python>=4.8
