@@ -6,7 +6,11 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 from ..config.config import PoseConfig
-from ..data.dataset import Human36MDataset, VideoHuman36MDataset
+from ..data.dataset import (
+    H36M_TO_MODEL_INDICES,
+    Human36MDataset,
+    VideoHuman36MDataset,
+)
 from .losses import MaskedSmoothL1Loss
 from .metrics import count_parameters, root_relative_depth_mae_mm
 from ..model.model import DepthLiftingModel
@@ -56,8 +60,10 @@ def main() -> None:
     print(f"device={device}")
     config = PoseConfig()
     if args.manifest:
-        dataset = Human36MDataset(args.manifest, args.subjects, 7, 8,
-                                  h36m_indices=list(range(15)))
+        dataset = Human36MDataset(
+            args.manifest, args.subjects, 7, 8,
+            h36m_indices=list(H36M_TO_MODEL_INDICES),
+        )
     else:
         dataset = VideoHuman36MDataset(
             args.data_root, args.subjects, 7, 8,

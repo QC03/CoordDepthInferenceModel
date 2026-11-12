@@ -19,11 +19,17 @@ _SKELETON_EDGES = (
 
 
 def _draw_skeleton_projection(points: np.ndarray, depths: np.ndarray,
-                              plane: str, size: int = 480) -> np.ndarray:
+                              plane: str, size: int = 480,
+                              depth_extent_m: float = 2.0,
+                              valid_mask: Optional[np.ndarray] = None) -> np.ndarray:
     import cv2
     canvas = np.full((size, size, 3), 28, dtype=np.uint8)
     if len(points) == 0:
         return canvas
+    if valid_mask is None:
+        valid_mask = np.ones(len(points), dtype=bool)
+    if len(valid_mask) != len(points):
+        raise ValueError("valid_mask length must match points")
     centered = points - 0.5
     z = depths.astype(np.float32)
     z = z - z.mean()
@@ -31,8 +37,9 @@ def _draw_skeleton_projection(points: np.ndarray, depths: np.ndarray,
         projected = centered.copy()
         title = "X-Y skeleton"
     elif plane == "yz":
-        scale = max(float(np.max(np.abs(z))), 1e-4)
-        projected = np.column_stack((centered[:, 1], -z / scale))
+        if depth_extent_m <= 0:
+            raise ValueError("depth_extent_m must be positive")
+        projected = np.column_stack((-z / depth_extent_m, centered[:, 1]))
         title = "Y-Z skeleton"
     else:
         raise ValueError(f"Unsupported projection plane: {plane}")
@@ -40,11 +47,12 @@ def _draw_skeleton_projection(points: np.ndarray, depths: np.ndarray,
     projected += size / 2
 
     for left, right in _SKELETON_EDGES:
-        if left < len(projected) and right < len(projected):
+        if (left < len(projected) and right < len(projected)
+                and valid_mask[left] and valid_mask[right]):
             start = tuple(projected[left].astype(int))
             end = tuple(projected[right].astype(int))
             cv2.line(canvas, start, end, (80, 190, 255), 3)
-    for index in range(len(projected)):
+    for index in np.flatnonzero(valid_mask):
         center = tuple(projected[index].astype(int))
         cv2.circle(canvas, center, 6, (80, 255, 120), -1)
         cv2.circle(canvas, center, 6, (230, 230, 230), 1)
@@ -53,7 +61,7 @@ def _draw_skeleton_projection(points: np.ndarray, depths: np.ndarray,
                 cv2.FONT_HERSHEY_SIMPLEX, 0.65, (240, 240, 240), 1,
                 cv2.LINE_AA)
     axis_label = "x horizontal / y vertical" if plane == "xy" else \
-        "y horizontal / z vertical"
+        "-z horizontal / y vertical"
     cv2.putText(canvas, axis_label, (16, size - 18),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.5, (180, 180, 180), 1,
                 cv2.LINE_AA)
@@ -112,21 +120,37 @@ def run_video(path: Optional[str], onnx_model: str, pose_model: str = None,
         landmarks = result.pose_landmarks[0]
         points = np.array([(landmarks[i].x, landmarks[i].y)
                            for i in mp_indices], dtype=np.float32)
+        valid = np.array([
+            landmarks[i].visibility >= 0.5
+            and 0 <= landmarks[i].x <= 1
+            and 0 <= landmarks[i].y <= 1
+            for i in mp_indices
+        ], dtype=bool)
+        safe_points = points.copy()
+        valid_root = valid[7] and valid[8]
+        if valid_root:
+            safe_points[~valid] = (safe_points[7] + safe_points[8]) / 2
+        else:
+            safe_points[~valid] = 0.5
         # This baseline uses the full frame as a valid crop. Production
         # deployment should replace it with the training-time person box.
         image = cv2.resize(rgb, (224, 224)).astype(np.float32) / 255
         image = image.transpose(2, 0, 1)[None, ...]
         depth = session.run(
             ["root_relative_depth"],
-            {"images": image, "keypoints_2d": points[None, ...]},
+            {"images": image, "keypoints_2d": safe_points[None, ...]},
         )[0][0, :, 0]
         filtered_depth = np.empty_like(depth)
         for joint, value in enumerate(depth.tolist()):
             filtered_depth[joint] = filters.setdefault(
                 joint, OneEuroFilter()).filter(value, timestamp, track_id=joint)
         display = cv2.resize(frame, (640, 480))
-        xy_skeleton = _draw_skeleton_projection(points, filtered_depth, "xy")
-        yz_skeleton = _draw_skeleton_projection(points, filtered_depth, "yz")
+        xy_skeleton = _draw_skeleton_projection(
+            points, filtered_depth, "xy", valid_mask=valid
+        )
+        yz_skeleton = _draw_skeleton_projection(
+            points, filtered_depth, "yz", valid_mask=valid
+        )
         cv2.imshow("Root-relative depth inference",
                    np.hstack((display, xy_skeleton, yz_skeleton)))
         if cv2.waitKey(1) & 0xFF == ord("q"):

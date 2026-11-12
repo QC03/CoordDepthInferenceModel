@@ -23,11 +23,11 @@ class JointMapping:
         names = tuple(f"mp_{i}" for i in range(33))
         h36m = tuple(f"h36m_{i}" for i in range(25))
         mapping = {
-            0: 0, 11: 1, 12: 2, 13: 3, 14: 4, 15: 5, 16: 6,
-            23: 7, 24: 8, 25: 9, 26: 10, 27: 11, 28: 12,
-            31: 13, 32: 14,
+            0: 9, 11: 11, 12: 14, 13: 12, 14: 15, 15: 13, 16: 16,
+            23: 4, 24: 1, 25: 5, 26: 2, 27: 6, 28: 3,
+            31: 17, 32: 18,
         }
-        return cls(mapping, names, h36m, left_hip=23, right_hip=24,
+        return cls(mapping, names, h36m, left_hip=4, right_hip=1,
                    excluded=tuple(i for i in range(33) if i not in mapping))
 
 

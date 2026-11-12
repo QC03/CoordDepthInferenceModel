@@ -165,3 +165,13 @@ root-relative depth = Z_joint - (Z_left_hip + Z_right_hip) / 2
 ```
 
 평가 지표는 root-relative depth MAE(mm)이며, XYZ 모델의 MPJPE와 다릅니다.
+
+학습 레이블은 각 영상의 카메라 ID에 대응하는 `camera_parameters`의 외부 파라미터를
+사용해 월드 좌표를 카메라 좌표로 변환한 뒤 생성합니다. 따라서 카메라별 촬영 방향이
+달라도 카메라 Z축 기준 깊이를 학습합니다. 실시간 Y-Z 시각화의 깊이 축은 미터 단위
+고정 범위를 사용하며, 작은 노이즈를 화면 전체로 자동 확대하지 않습니다.
+
+3D 정답 관절은 Human3.6M 원본 순서에서 모델의 MediaPipe 15관절 순서로 재배열한
+뒤 사용합니다. 이 순서를 바꾸면 좌우 골반, 무릎, 발목의 깊이 레이블이 서로 다른
+관절에 연결되므로 기존 `model.pth`와 `depth_lifting.onnx`는 폐기하고 새 코드로
+다시 학습해야 합니다.

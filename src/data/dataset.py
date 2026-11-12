@@ -5,7 +5,13 @@ from urllib.request import urlopen
 import torch
 from torch.utils.data import Dataset
 
-from .coordinates import h36m_root_relative
+from .coordinates import h36m_root_relative, world_to_camera
+
+
+# Output order matches the 15 MediaPipe landmarks used by the model:
+# nose, shoulders, elbows, wrists, hips, knees, ankles, and feet.
+H36M_TO_MODEL_INDICES = (9, 11, 14, 12, 15, 13, 16, 4, 1,
+                         5, 2, 6, 3, 17, 18)
 
 
 class Human36MDataset(Dataset):
@@ -114,6 +120,7 @@ class VideoHuman36MDataset(Dataset):
         self.left_hip, self.right_hip = left_hip, right_hip
         self.samples = []
         self.labels: Dict[str, torch.Tensor] = {}
+        self.camera_parameters: Dict[str, tuple[torch.Tensor, torch.Tensor]] = {}
         root = Path(data_root)
         for subject in subjects:
             subject_root = root / subject
@@ -202,7 +209,13 @@ class VideoHuman36MDataset(Dataset):
         image = (self._cv2.resize(rgb, (224, 224))
                  .astype(self._np.float32) / 255.0)
         image_tensor = torch.from_numpy(image.transpose(2, 0, 1))
-        points = self.labels[label_path][frame_index, :15]
+        points = self.labels[label_path][frame_index]
+        camera_id = Path(video_path).parent.name
+        parameters = self._load_camera_parameters(
+            Path(label_path).stem, camera_id, Path(label_path).parents[1]
+        )
+        points = world_to_camera(points, *parameters)
+        points = points[list(H36M_TO_MODEL_INDICES)]
         target = h36m_root_relative(points[None], self.left_hip,
                                     self.right_hip)[0, :, 2:]
         return {
@@ -215,6 +228,30 @@ class VideoHuman36MDataset(Dataset):
     def _mp_image(self, rgb):
         import mediapipe as mp
         return mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
+
+    def _load_camera_parameters(
+        self, action: str, camera_id: str, subject_root: Path
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        path = subject_root / "camera_parameters" / camera_id / f"{action}.json"
+        cache_key = str(path)
+        if cache_key in self.camera_parameters:
+            return self.camera_parameters[cache_key]
+        if not path.is_file():
+            raise FileNotFoundError(
+                f"Camera parameters not found for video {camera_id}/{action}: "
+                f"{path.resolve()}"
+            )
+        data = json.loads(path.read_text(encoding="utf-8"))
+        try:
+            extrinsics = data["extrinsics"]
+            rotation = torch.tensor(extrinsics["R"], dtype=torch.float32)
+            translation = torch.tensor(extrinsics["T"], dtype=torch.float32).reshape(3)
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError(
+                f"Invalid camera extrinsics in {path.resolve()}"
+            ) from exc
+        self.camera_parameters[cache_key] = rotation, translation
+        return rotation, translation
 
 
 def ensure_pose_model(pose_model: Optional[str] = None) -> Path:

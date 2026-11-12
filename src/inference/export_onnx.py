@@ -6,6 +6,14 @@ from ..model.model import DepthLiftingModel
 
 
 def export_model(model: DepthLiftingModel, output: str, opset: int = 18) -> None:
+    try:
+        import onnx  # noqa: F401
+        import onnxscript  # noqa: F401
+    except ImportError as exc:
+        raise RuntimeError(
+            "ONNX export requires onnx and onnxscript. "
+            "Install them with: python -m pip install onnx onnxscript"
+        ) from exc
     model.eval()
     torch.manual_seed(0)
     device = next(model.parameters()).device
