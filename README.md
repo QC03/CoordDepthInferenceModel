@@ -17,6 +17,13 @@ NVIDIA GPU로 학습하려면 CUDA가 포함된 PyTorch 빌드를 설치합니�
 python -m pip install -r requirements-gpu.txt
 ```
 
+기존 CPU 전용 PyTorch가 이미 설치되어 있다면 반드시 다음처럼 강제 재설치해야
+합니다.
+
+```cmd
+python -m pip install --upgrade --force-reinstall -r requirements-gpu.txt
+```
+
 학습은 기본적으로 CUDA가 가능하면 `cuda`, 아니면 `cpu`를 자동 선택합니다.
 강제로 지정하려면 `--device cuda` 또는 `--device cpu`를 사용할 수 있습니다.
 
