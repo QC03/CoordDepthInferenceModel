@@ -13,6 +13,31 @@ from ..model.model import DepthLiftingModel
 from ..inference.export_onnx import export_model
 
 
+def _select_device(requested: str) -> torch.device:
+    if requested == "cuda" and not torch.cuda.is_available():
+        cuda_build = torch.version.cuda or "none (CPU-only build)"
+        raise RuntimeError(
+            "CUDA was requested but is unavailable. "
+            f"Installed PyTorch CUDA build: {cuda_build}. "
+            "Install the NVIDIA build with: "
+            "python -m pip install -r requirements-gpu.txt"
+        )
+    device_name = (
+        "cuda" if requested == "auto" and torch.cuda.is_available()
+        else "cpu" if requested == "auto"
+        else requested
+    )
+    device = torch.device(device_name)
+    if device.type == "cuda":
+        print(f"gpu={torch.cuda.get_device_name(device)}")
+    elif requested == "auto" and torch.version.cuda is None:
+        print(
+            "CUDA unavailable: the installed PyTorch is CPU-only. "
+            "Install requirements-gpu.txt to enable NVIDIA GPU training."
+        )
+    return device
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--manifest")
@@ -24,8 +49,10 @@ def main() -> None:
     parser.add_argument("--pose-model")
     parser.add_argument("--checkpoint-output", default="model.pth")
     parser.add_argument("--onnx-output", default="depth_lifting.onnx")
+    parser.add_argument("--device", choices=("auto", "cuda", "cpu"),
+                        default="auto")
     args = parser.parse_args()
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = _select_device(args.device)
     print(f"device={device}")
     config = PoseConfig()
     if args.manifest:

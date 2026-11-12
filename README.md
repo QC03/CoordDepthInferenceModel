@@ -10,6 +10,16 @@ MediaPipe Pose Landmarker와 ResNet-18 기반 모델을 사용해 15개 관절�
 python -m pip install -r requirements.txt
 ```
 
+NVIDIA GPU로 학습하려면 CUDA가 포함된 PyTorch 빌드를 설치합니다. RTX 5070을
+포함한 NVIDIA GPU 환경에서는 다음 명령을 사용하세요.
+
+```cmd
+python -m pip install -r requirements-gpu.txt
+```
+
+학습은 기본적으로 CUDA가 가능하면 `cuda`, 아니면 `cpu`를 자동 선택합니다.
+강제로 지정하려면 `--device cuda` 또는 `--device cpu`를 사용할 수 있습니다.
+
 필요한 구성 요소:
 
 - Human3.6M 영상 및 `joints3d_25` 정답
