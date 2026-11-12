@@ -5,12 +5,37 @@ import torch
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-from .config import PoseConfig
-from .dataset import Human36MDataset, VideoHuman36MDataset
+from ..config.config import PoseConfig
+from ..data.dataset import Human36MDataset, VideoHuman36MDataset
 from .losses import MaskedSmoothL1Loss
 from .metrics import count_parameters, root_relative_depth_mae_mm
-from .model import DepthLiftingModel
-from .export_onnx import export_model
+from ..model.model import DepthLiftingModel
+from ..inference.export_onnx import export_model
+
+
+def _select_device(requested: str) -> torch.device:
+    if requested == "cuda" and not torch.cuda.is_available():
+        cuda_build = torch.version.cuda or "none (CPU-only build)"
+        raise RuntimeError(
+            "CUDA was requested but is unavailable. "
+            f"Installed PyTorch CUDA build: {cuda_build}. "
+            "Install the NVIDIA build with: "
+            "python -m pip install -r requirements-gpu.txt"
+        )
+    device_name = (
+        "cuda" if requested == "auto" and torch.cuda.is_available()
+        else "cpu" if requested == "auto"
+        else requested
+    )
+    device = torch.device(device_name)
+    if device.type == "cuda":
+        print(f"gpu={torch.cuda.get_device_name(device)}")
+    elif requested == "auto" and torch.version.cuda is None:
+        print(
+            "CUDA unavailable: the installed PyTorch is CPU-only. "
+            "Install requirements-gpu.txt to enable NVIDIA GPU training."
+        )
+    return device
 
 
 def main() -> None:
@@ -24,7 +49,11 @@ def main() -> None:
     parser.add_argument("--pose-model")
     parser.add_argument("--checkpoint-output", default="model.pth")
     parser.add_argument("--onnx-output", default="depth_lifting.onnx")
+    parser.add_argument("--device", choices=("auto", "cuda", "cpu"),
+                        default="auto")
     args = parser.parse_args()
+    device = _select_device(args.device)
+    print(f"device={device}")
     config = PoseConfig()
     if args.manifest:
         dataset = Human36MDataset(args.manifest, args.subjects, 7, 8,
@@ -35,7 +64,7 @@ def main() -> None:
             frame_stride=args.frame_stride, max_samples=args.max_samples,
             pose_model=args.pose_model)
     loader = DataLoader(dataset, batch_size=1, shuffle=True)
-    model = DepthLiftingModel(config)
+    model = DepthLiftingModel(config).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
     criterion = MaskedSmoothL1Loss()
     print(f"parameters={count_parameters(model)}")
@@ -45,6 +74,10 @@ def main() -> None:
         model.train()
         epoch_loss = 0.0
         for batch in loader:
+            batch = {
+                key: value.to(device) if torch.is_tensor(value) else value
+                for key, value in batch.items()
+            }
             prediction = model(batch["images"], batch["keypoints_2d"])
             loss = criterion(prediction, batch["target_depth"],
                              batch["valid_mask"])
@@ -59,7 +92,10 @@ def main() -> None:
               f"loss={epoch_loss / max(len(loader), 1):.5f}")
     progress.close()
     checkpoint_path = Path(args.checkpoint_output)
-    torch.save(model.state_dict(), checkpoint_path)
+    torch.save(
+        {key: value.detach().cpu() for key, value in model.state_dict().items()},
+        checkpoint_path,
+    )
     print(f"saved checkpoint: {checkpoint_path}")
     export_model(model, args.onnx_output)
     print(f"saved ONNX model: {args.onnx_output}")

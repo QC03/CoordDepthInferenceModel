@@ -10,12 +10,40 @@ MediaPipe Pose Landmarker와 ResNet-18 기반 모델을 사용해 15개 관절�
 python -m pip install -r requirements.txt
 ```
 
+NVIDIA GPU로 학습하려면 CUDA가 포함된 PyTorch 빌드를 설치합니다. RTX 5070을
+포함한 NVIDIA GPU 환경에서는 다음 명령을 사용하세요.
+
+```cmd
+python -m pip install -r requirements-gpu.txt
+```
+
+기존 CPU 전용 PyTorch가 이미 설치되어 있다면 반드시 다음처럼 강제 재설치해야
+합니다.
+
+```cmd
+python -m pip install --upgrade --force-reinstall -r requirements-gpu.txt
+```
+
+학습은 기본적으로 CUDA가 가능하면 `cuda`, 아니면 `cpu`를 자동 선택합니다.
+강제로 지정하려면 `--device cuda` 또는 `--device cpu`를 사용할 수 있습니다.
+
 필요한 구성 요소:
 
 - Human3.6M 영상 및 `joints3d_25` 정답
 - MediaPipe Tasks `.task` 포즈 모델
 - PyTorch: 학습용
 - ONNX Runtime: 추론용
+
+소스 코드는 기능별로 다음과 같이 `src` 아래에 구성되어 있습니다.
+
+```text
+src/
+├─ config/       설정 및 관절 매핑
+├─ data/         데이터셋 및 좌표 변환
+├─ model/        PyTorch 모델
+├─ training/     학습, 손실, 평가 지표
+└─ inference/    ONNX export/검증 및 실시간 추론
+```
 
 첫 실행 시 Pose Landmarker `.task` 파일을 자동으로 다운로드합니다. 직접 지정하려면
 `--pose-model` 옵션을 사용합니다.
@@ -26,7 +54,7 @@ python -m pip install -r requirements.txt
 사용합니다. 2D 랜드마크는 각 영상 프레임에서 `.task` 모델로 검출합니다.
 
 ```cmd
-python -m pose_lifting.train ^
+python -m src.training.train ^
   --subjects s01 s02 ^
   --epochs 1 ^
   --frame-stride 10 ^
@@ -35,6 +63,10 @@ python -m pose_lifting.train ^
 
 학습 중 `tqdm`으로 진행률, epoch, loss를 표시합니다. 학습 종료 시 다음 파일이
 자동 생성됩니다.
+
+CUDA를 사용할 수 있는 PyTorch 환경이면 학습 장치로 CUDA를 자동 선택하고, 그렇지
+않으면 CPU를 사용합니다. 시작 시 `device=cuda` 또는 `device=cpu`로 선택 결과를
+표시합니다.
 
 ```text
 model.pth
@@ -45,7 +77,7 @@ depth_lifting.onnx
 데이터 위치가 기본값 `train`과 다르면 다음처럼 지정합니다.
 
 ```cmd
-python -m pose_lifting.train ^
+python -m src.training.train ^
   --data-root D:\path\to\train ^
   --subjects s01 s02
 ```
@@ -53,7 +85,7 @@ python -m pose_lifting.train ^
 `.task` 파일을 직접 지정하는 예:
 
 ```cmd
-python -m pose_lifting.train ^
+python -m src.training.train ^
   --subjects s01 ^
   --pose-model D:\models\pose_landmarker_lite.task
 ```
@@ -63,7 +95,7 @@ python -m pose_lifting.train ^
 학습이 끝나면 별도 export 없이 생성된 ONNX 파일을 확인할 수 있습니다.
 
 ```cmd
-python -m pose_lifting.compare_onnx ^
+python -m src.inference.compare_onnx ^
   depth_lifting.onnx ^
   --checkpoint model.pth
 ```
@@ -77,7 +109,7 @@ ONNX 입력은 `B=1`, `224x224`로 고정됩니다.
 영상 파일을 지정하는 경우:
 
 ```cmd
-python -m pose_lifting.realtime ^
+python -m src.inference.realtime ^
   input.mp4 ^
   --onnx depth_lifting.onnx
 ```
@@ -86,14 +118,14 @@ python -m pose_lifting.realtime ^
 웹캠 창을 종료하려면 `q` 키를 누릅니다.
 
 ```cmd
-python -m pose_lifting.realtime ^
+python -m src.inference.realtime ^
   --onnx depth_lifting.onnx
 ```
 
 다른 웹캠을 사용하려면:
 
 ```cmd
-python -m pose_lifting.realtime ^
+python -m src.inference.realtime ^
   --onnx depth_lifting.onnx ^
   --camera-index 1
 ```
@@ -101,7 +133,7 @@ python -m pose_lifting.realtime ^
 로컬 `.task` 모델을 사용할 때:
 
 ```cmd
-python -m pose_lifting.realtime ^
+python -m src.inference.realtime ^
   input.mp4 ^
   --onnx depth_lifting.onnx ^
   --pose-model D:\models\pose_landmarker_lite.task

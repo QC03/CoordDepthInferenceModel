@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Dict, Optional
 import numpy as np
 
-from .dataset import ensure_pose_model
+from ..data.dataset import ensure_pose_model
 from .filtering import OneEuroFilter
 
 

@@ -2,8 +2,8 @@ import argparse
 import numpy as np
 import torch
 
-from .config import PoseConfig
-from .model import DepthLiftingModel
+from ..config.config import PoseConfig
+from ..model.model import DepthLiftingModel
 
 
 def main() -> None:

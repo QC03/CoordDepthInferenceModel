@@ -1,15 +1,16 @@
 import argparse
 import torch
 
-from .config import PoseConfig
-from .model import DepthLiftingModel
+from ..config.config import PoseConfig
+from ..model.model import DepthLiftingModel
 
 
 def export_model(model: DepthLiftingModel, output: str, opset: int = 18) -> None:
     model.eval()
     torch.manual_seed(0)
-    images = torch.randn(1, 3, 224, 224)
-    keypoints = torch.rand(1, 15, 2)
+    device = next(model.parameters()).device
+    images = torch.randn(1, 3, 224, 224, device=device)
+    keypoints = torch.rand(1, 15, 2, device=device)
     torch.onnx.export(
         model, (images, keypoints), output,
         input_names=["images", "keypoints_2d"],
