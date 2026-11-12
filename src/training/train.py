@@ -103,6 +103,10 @@ def main() -> None:
     with torch.no_grad():
         start = time.perf_counter()
         for batch in loader:
+            batch = {
+                key: value.to(device) if torch.is_tensor(value) else value
+                for key, value in batch.items()
+            }
             prediction = model(batch["images"], batch["keypoints_2d"])
         elapsed = (time.perf_counter() - start) / max(len(loader), 1)
         mae = root_relative_depth_mae_mm(prediction, batch["target_depth"],
