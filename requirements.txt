@@ -1,12 +1,7 @@
-<<<<<<< HEAD
-torch>=2.1
-torchvision>=0.16
-=======
 # Install the CUDA build for NVIDIA GPUs with:
 # python -m pip install -r requirements-gpu.txt
 torch>=2.7
 torchvision>=0.22
->>>>>>> 48277ae16d1ab41042bb9ddbbdd82967775daad2
 numpy>=1.24
 mediapipe>=0.10
 opencv-python>=4.8
