@@ -3,8 +3,8 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 
-from .config import PoseConfig
-from .coordinates import root_relative_depth, root_relative_xy
+from ..config.config import PoseConfig
+from ..data.coordinates import root_relative_xy
 
 
 class ResNet18Layer4(nn.Module):
