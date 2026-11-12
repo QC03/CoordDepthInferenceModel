@@ -74,6 +74,8 @@ depth_lifting.onnx
 ```
 
 전체 데이터를 사용하려면 `--frame-stride`와 `--max-samples`를 생략합니다.
+`--frame-stride`가 클수록 프레임 간격이 커져 샘플 수가 줄어듭니다.
+`--max-samples`를 지정하면 전체 데이터에 걸쳐 샘플을 균등하게 선택합니다.
 데이터 위치가 기본값 `train`과 다르면 다음처럼 지정합니다.
 
 ```cmd

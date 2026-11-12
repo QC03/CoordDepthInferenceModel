@@ -129,12 +129,24 @@ class VideoHuman36MDataset(Dataset):
                     for frame in range(0, len(frames), frame_stride):
                         self.samples.append((str(video_path), str(label_path),
                                              frame))
-                        if max_samples is not None and len(self.samples) >= max_samples:
-                            return
         if not self.samples:
             raise ValueError(
                 f"No Human3.6M video/label samples found under {root.resolve()}"
             )
+        if max_samples is not None and len(self.samples) > max_samples:
+            if max_samples < 1:
+                raise ValueError("max_samples must be at least 1")
+            if max_samples == 1:
+                selected = [self.samples[0]]
+            else:
+                last_index = len(self.samples) - 1
+                selected = [
+                    self.samples[
+                        round(index * last_index / (max_samples - 1))
+                    ]
+                    for index in range(max_samples)
+                ]
+            self.samples = selected
 
     @classmethod
     def _ensure_pose_model(cls, pose_model: Optional[str]) -> Path:

@@ -64,6 +64,8 @@ def main() -> None:
             frame_stride=args.frame_stride, max_samples=args.max_samples,
             pose_model=args.pose_model)
     loader = DataLoader(dataset, batch_size=1, shuffle=True)
+    print(f"samples={len(dataset)} epochs={args.epochs} "
+          f"updates={args.epochs * len(loader)}")
     model = DepthLiftingModel(config).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
     criterion = MaskedSmoothL1Loss()
@@ -100,6 +102,8 @@ def main() -> None:
     export_model(model, args.onnx_output)
     print(f"saved ONNX model: {args.onnx_output}")
     model.eval()
+    total_mae = 0.0
+    evaluated_batches = 0
     with torch.no_grad():
         start = time.perf_counter()
         for batch in loader:
@@ -108,10 +112,13 @@ def main() -> None:
                 for key, value in batch.items()
             }
             prediction = model(batch["images"], batch["keypoints_2d"])
+            total_mae += root_relative_depth_mae_mm(
+                prediction, batch["target_depth"], batch["valid_mask"]
+            ).item()
+            evaluated_batches += 1
         elapsed = (time.perf_counter() - start) / max(len(loader), 1)
-        mae = root_relative_depth_mae_mm(prediction, batch["target_depth"],
-                                         batch["valid_mask"])
-    print(f"last_batch_mae_mm={mae.item():.3f} inference_ms={elapsed * 1000:.3f}")
+    mae = total_mae / max(evaluated_batches, 1)
+    print(f"mean_mae_mm={mae:.3f} inference_ms={elapsed * 1000:.3f}")
 
 
 if __name__ == "__main__":
