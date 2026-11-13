@@ -1,6 +1,6 @@
 # 실시간 2D-to-3D 루트 상대 깊이 추정
 
-MediaPipe Pose Landmarker와 ResNet-18 기반 모델을 사용해 15개 관절의
+rtmlib RTMPose와 ResNet-18 기반 모델을 사용해 15개 관절의
 루트 상대 카메라 Z 깊이를 추정하는 프로젝트입니다. 모델은 절대 3D XYZ가
 아닌 골반 기준 상대 깊이를 출력합니다.
 
@@ -30,7 +30,7 @@ python -m pip install --upgrade --force-reinstall -r requirements-gpu.txt
 필요한 구성 요소:
 
 - Human3.6M 영상 및 `joints3d_25` 정답
-- MediaPipe Tasks `.task` 포즈 모델
+- rtmlib 및 ONNX Runtime 포즈 모델
 - PyTorch: 학습용
 - ONNX Runtime: 추론용
 
@@ -45,24 +45,34 @@ src/
 └─ inference/    ONNX export/검증 및 실시간 추론
 ```
 
-첫 실행 시 Pose Landmarker `.task` 파일을 자동으로 다운로드합니다. 직접 지정하려면
-`--pose-model` 옵션을 사용합니다.
+첫 실행 시 rtmlib의 경량 RTMPose 모델을 자동으로 다운로드합니다. Human3.6M이
+단일 인물 영상이므로 별도 사람 검출 단계를 생략하고 전체 프레임에서 RTMPose를
+실행합니다. CUDA 환경에서는 포즈 검출도 GPU에서 실행됩니다.
 
 ## 2. 학습
 
 `train/<subject>` 아래의 영상을 읽고, 같은 action의 `joints3d_25` JSON을 정답으로
-사용합니다. 2D 랜드마크는 각 영상 프레임에서 `.task` 모델로 검출합니다.
+사용합니다. 2D 랜드마크는 각 영상 프레임에서 rtmlib RTMPose로 검출합니다.
 
 ```cmd
 python -m src.training.train ^
   --subjects s01 s02 ^
   --epochs 1 ^
   --frame-stride 10 ^
-  --max-samples 100
+  --max-samples 100 ^
+  --batch-size 8 ^
+  --num-workers 2 ^
+  --pose-mode lightweight ^
+  --pose-device cuda
 ```
 
 학습 중 `tqdm`으로 진행률, epoch, loss를 표시합니다. 학습 종료 시 다음 파일이
 자동 생성됩니다.
+
+`--batch-size`는 GPU 메모리에 맞춰 늘리면 학습 처리량을 높일 수 있습니다. 영상에서
+프레임을 읽고 포즈를 검출하는 작업은 `--num-workers`개의 프로세스에서 병렬로
+수행되며, 메모리가 부족하거나 CPU 사용률이 너무 높으면 `0` 또는 더 작은 값으로
+낮출 수 있습니다. CUDA 사용 시 AMP와 pinned memory도 자동으로 활성화됩니다.
 
 CUDA를 사용할 수 있는 PyTorch 환경이면 학습 장치로 CUDA를 자동 선택하고, 그렇지
 않으면 CPU를 사용합니다. 시작 시 `device=cuda` 또는 `device=cpu`로 선택 결과를
@@ -84,13 +94,19 @@ python -m src.training.train ^
   --subjects s01 s02
 ```
 
-`.task` 파일을 직접 지정하는 예:
+포즈 검출 모델의 속도/정확도 모드:
 
 ```cmd
 python -m src.training.train ^
   --subjects s01 ^
-  --pose-model D:\models\pose_landmarker_lite.task
+  --pose-mode lightweight ^
+  --pose-device cuda
 ```
+
+`--pose-mode`는 `lightweight`, `balanced`, `performance` 중 하나입니다. GPU 메모리
+사용량이 높으면 `lightweight`를 사용하고, 포즈 정확도가 더 중요하면 `balanced`를
+사용합니다. CUDA 검출기를 DataLoader 워커에서 실행할 때 문제가 있으면
+`--num-workers 0`으로 한 프로세스에서 실행합니다.
 
 ## 3. ONNX 확인
 
@@ -132,20 +148,20 @@ python -m src.inference.realtime ^
   --camera-index 1
 ```
 
-로컬 `.task` 모델을 사용할 때:
+CPU에서 포즈 검출을 실행할 때:
 
 ```cmd
 python -m src.inference.realtime ^
   input.mp4 ^
   --onnx depth_lifting.onnx ^
-  --pose-model D:\models\pose_landmarker_lite.task
+  --pose-device cpu
 ```
 
 프레임 처리 순서:
 
 ```text
 영상 프레임 읽기
-→ MediaPipe Tasks로 2D 랜드마크 검출
+→ rtmlib RTMPose로 2D 랜드마크 검출
 → 이미지와 2D 좌표 전처리
 → ONNX Runtime 추론
 → 골반 기준 root-relative 깊이 계산
@@ -171,7 +187,8 @@ root-relative depth = Z_joint - (Z_left_hip + Z_right_hip) / 2
 달라도 카메라 Z축 기준 깊이를 학습합니다. 실시간 Y-Z 시각화의 깊이 축은 미터 단위
 고정 범위를 사용하며, 작은 노이즈를 화면 전체로 자동 확대하지 않습니다.
 
-3D 정답 관절은 Human3.6M 원본 순서에서 모델의 MediaPipe 15관절 순서로 재배열한
-뒤 사용합니다. 이 순서를 바꾸면 좌우 골반, 무릎, 발목의 깊이 레이블이 서로 다른
+3D 정답 관절은 Human3.6M 원본 순서에서 모델의 rtmlib 15관절 순서로 재배열한
+뒤 사용합니다. rtmlib Halpe26에서 코, 어깨, 팔꿈치, 손목, 골반, 무릎, 발목,
+좌우 엄지발가락을 선택하며, 이 순서를 바꾸면 좌우 골반, 무릎, 발목의 깊이 레이블이 서로 다른
 관절에 연결되므로 기존 `model.pth`와 `depth_lifting.onnx`는 폐기하고 새 코드로
 다시 학습해야 합니다.

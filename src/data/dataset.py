@@ -1,14 +1,14 @@
 import json
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence
-from urllib.request import urlopen
 import torch
 from torch.utils.data import Dataset
 
 from .coordinates import h36m_root_relative, world_to_camera
+from .pose_detector import RTMLibPoseDetector
 
 
-# Output order matches the 15 MediaPipe landmarks used by the model:
+# Output order matches the 15 rtmlib landmarks used by the model:
 # nose, shoulders, elbows, wrists, hips, knees, ankles, and feet.
 H36M_TO_MODEL_INDICES = (9, 11, 14, 12, 15, 13, 16, 4, 1,
                          5, 2, 6, 3, 17, 18)
@@ -17,7 +17,7 @@ H36M_TO_MODEL_INDICES = (9, 11, 14, 12, 15, 13, 16, 4, 1,
 class Human36MDataset(Dataset):
     """Reads this repository's per-frame joints3d_25 JSON files.
 
-    Images and MediaPipe detections are intentionally injected by a manifest;
+    Images and rtmlib detections are intentionally injected by a manifest;
     this avoids silently substituting GT projections for real detector input.
     """
     def __init__(self, manifest: str, subjects: Sequence[str],
@@ -80,43 +80,17 @@ class Human36MDataset(Dataset):
 
 
 class VideoHuman36MDataset(Dataset):
-    """Loads this repository's Human3.6M videos and 3D labels directly.
-
-    MediaPipe detections are computed from each video frame because the
-    repository contains videos, not precomputed image tensors.
-    """
-    _mp_indices = [0, 11, 12, 13, 14, 15, 16, 23, 24, 25, 26, 27, 28, 31, 32]
-    _pose_model_url = (
-        "https://storage.googleapis.com/mediapipe-models/pose_landmarker/"
-        "pose_landmarker_lite/float16/1/pose_landmarker_lite.task"
-    )
+    """Loads Human3.6M videos and 3D labels with rtmlib pose detection."""
 
     def __init__(self, data_root: str, subjects: Sequence[str],
                  left_hip: int, right_hip: int, frame_stride: int = 1,
                  max_samples: Optional[int] = None,
-                 pose_model: Optional[str] = None) -> None:
+                 pose_mode: str = "lightweight",
+                 pose_device: Optional[str] = None) -> None:
         if frame_stride < 1:
             raise ValueError("frame_stride must be at least 1")
-        try:
-            import cv2
-            import mediapipe as mp
-        except ImportError as exc:
-            raise ImportError(
-                "Automatic train/ loading requires mediapipe and opencv-python. "
-                "Install them with: python -m pip install mediapipe opencv-python"
-            ) from exc
-        self._cv2 = cv2
-        import numpy as np
-        self._np = np
-        from mediapipe.tasks import python
-        from mediapipe.tasks.python import vision
-        model_path = self._ensure_pose_model(pose_model)
-        options = vision.PoseLandmarkerOptions(
-            base_options=python.BaseOptions(model_asset_path=str(model_path)),
-            running_mode=vision.RunningMode.IMAGE,
-            num_poses=1,
-        )
-        self._pose = vision.PoseLandmarker.create_from_options(options)
+        self._pose_detector = RTMLibPoseDetector(pose_mode, pose_device)
+        self._captures = {}
         self.left_hip, self.right_hip = left_hip, right_hip
         self.samples = []
         self.labels: Dict[str, torch.Tensor] = {}
@@ -155,59 +129,29 @@ class VideoHuman36MDataset(Dataset):
                 ]
             self.samples = selected
 
-    @classmethod
-    def _ensure_pose_model(cls, pose_model: Optional[str]) -> Path:
-        if pose_model:
-            path = Path(pose_model)
-            if path.suffix.lower() != ".task":
-                raise ValueError("--pose-model must point to a .task file")
-            if not path.is_file():
-                raise FileNotFoundError(f"Pose model not found: {path.resolve()}")
-            return path
-        cache_path = Path.home() / ".cache" / "coord-depth" / "pose_landmarker_lite.task"
-        if not cache_path.is_file():
-            cache_path.parent.mkdir(parents=True, exist_ok=True)
-            try:
-                with urlopen(cls._pose_model_url, timeout=60) as response:
-                    cache_path.write_bytes(response.read())
-            except Exception as exc:
-                raise RuntimeError(
-                    "Could not download the MediaPipe pose model. "
-                    "Pass --pose-model PATH to a local .task file."
-                ) from exc
-        return cache_path
     def __len__(self) -> int:
         return len(self.samples)
 
     def __getitem__(self, index: int) -> Dict[str, torch.Tensor]:
+        import cv2
+        import numpy as np
+
         video_path, label_path, frame_index = self.samples[index]
-        capture = self._cv2.VideoCapture(video_path)
-        capture.set(self._cv2.CAP_PROP_POS_FRAMES, frame_index)
+        capture = self._captures.get(video_path)
+        if capture is None or not capture.isOpened():
+            capture = cv2.VideoCapture(video_path)
+            self._captures[video_path] = capture
+        capture.set(cv2.CAP_PROP_POS_FRAMES, frame_index)
         ok, frame = capture.read()
-        capture.release()
         if not ok:
+            capture.release()
+            self._captures.pop(video_path, None)
             raise RuntimeError(
                 f"Could not read frame {frame_index} from {video_path}"
             )
-        rgb = self._cv2.cvtColor(frame, self._cv2.COLOR_BGR2RGB)
-        image = self._mp_image(rgb)
-        result = self._pose.detect(image)
-        if not result.pose_landmarks:
-            keypoints = self._np.zeros((len(self._mp_indices), 2),
-                                       dtype=self._np.float32)
-            valid = self._np.zeros(len(self._mp_indices),
-                                   dtype=self._np.bool_)
-        else:
-            landmarks = result.pose_landmarks[0]
-            keypoints = self._np.array(
-                [(landmarks[i].x, landmarks[i].y) for i in self._mp_indices],
-                dtype=self._np.float32)
-            valid = self._np.array(
-                [landmarks[i].visibility >= 0.5 and 0 <= landmarks[i].x <= 1
-                 and 0 <= landmarks[i].y <= 1 for i in self._mp_indices],
-                dtype=self._np.bool_)
-        image = (self._cv2.resize(rgb, (224, 224))
-                 .astype(self._np.float32) / 255.0)
+        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        keypoints, valid = self._pose_detector.detect(frame)
+        image = (cv2.resize(rgb, (224, 224)).astype(np.float32) / 255.0)
         image_tensor = torch.from_numpy(image.transpose(2, 0, 1))
         points = self.labels[label_path][frame_index]
         camera_id = Path(video_path).parent.name
@@ -224,10 +168,6 @@ class VideoHuman36MDataset(Dataset):
             "target_depth": target,
             "valid_mask": torch.from_numpy(valid),
         }
-
-    def _mp_image(self, rgb):
-        import mediapipe as mp
-        return mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
 
     def _load_camera_parameters(
         self, action: str, camera_id: str, subject_root: Path
@@ -254,6 +194,3 @@ class VideoHuman36MDataset(Dataset):
         return rotation, translation
 
 
-def ensure_pose_model(pose_model: Optional[str] = None) -> Path:
-    """Return a validated MediaPipe Tasks pose model path."""
-    return VideoHuman36MDataset._ensure_pose_model(pose_model)

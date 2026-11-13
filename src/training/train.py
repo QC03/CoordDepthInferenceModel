@@ -50,12 +50,22 @@ def main() -> None:
     parser.add_argument("--epochs", type=int, default=1)
     parser.add_argument("--frame-stride", type=int, default=1)
     parser.add_argument("--max-samples", type=int)
-    parser.add_argument("--pose-model")
+    parser.add_argument("--batch-size", type=int, default=8)
+    parser.add_argument("--num-workers", type=int, default=2)
+    parser.add_argument("--pose-mode", choices=("lightweight", "balanced",
+                                                 "performance"),
+                        default="lightweight")
+    parser.add_argument("--pose-device", choices=("auto", "cuda", "cpu"),
+                        default="auto")
     parser.add_argument("--checkpoint-output", default="model.pth")
     parser.add_argument("--onnx-output", default="depth_lifting.onnx")
     parser.add_argument("--device", choices=("auto", "cuda", "cpu"),
                         default="auto")
     args = parser.parse_args()
+    if args.batch_size < 1:
+        parser.error("--batch-size must be at least 1")
+    if args.num_workers < 0:
+        parser.error("--num-workers must be non-negative")
     device = _select_device(args.device)
     print(f"device={device}")
     config = PoseConfig()
@@ -68,13 +78,24 @@ def main() -> None:
         dataset = VideoHuman36MDataset(
             args.data_root, args.subjects, 7, 8,
             frame_stride=args.frame_stride, max_samples=args.max_samples,
-            pose_model=args.pose_model)
-    loader = DataLoader(dataset, batch_size=1, shuffle=True)
+            pose_mode=args.pose_mode, pose_device=args.pose_device)
+    loader_options = {
+        "batch_size": args.batch_size,
+        "shuffle": True,
+        "num_workers": args.num_workers,
+        "pin_memory": device.type == "cuda",
+    }
+    if args.num_workers > 0:
+        loader_options.update(prefetch_factor=2, persistent_workers=True)
+    loader = DataLoader(dataset, **loader_options)
     print(f"samples={len(dataset)} epochs={args.epochs} "
-          f"updates={args.epochs * len(loader)}")
+          f"updates={args.epochs * len(loader)} batch_size={args.batch_size} "
+          f"workers={args.num_workers}")
     model = DepthLiftingModel(config).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
     criterion = MaskedSmoothL1Loss()
+    use_amp = device.type == "cuda"
+    scaler = torch.amp.GradScaler("cuda", enabled=use_amp)
     print(f"parameters={count_parameters(model)}")
     total_steps = args.epochs * len(loader)
     progress = tqdm(total=total_steps, desc="training", unit="step")
@@ -83,15 +104,18 @@ def main() -> None:
         epoch_loss = 0.0
         for batch in loader:
             batch = {
-                key: value.to(device) if torch.is_tensor(value) else value
+                key: value.to(device, non_blocking=True)
+                if torch.is_tensor(value) else value
                 for key, value in batch.items()
             }
-            prediction = model(batch["images"], batch["keypoints_2d"])
-            loss = criterion(prediction, batch["target_depth"],
-                             batch["valid_mask"])
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
+            with torch.autocast(device_type=device.type, enabled=use_amp):
+                prediction = model(batch["images"], batch["keypoints_2d"])
+                loss = criterion(prediction, batch["target_depth"],
+                                 batch["valid_mask"])
+            optimizer.zero_grad(set_to_none=True)
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
             epoch_loss += loss.item()
             progress.update(1)
             progress.set_postfix(epoch=epoch + 1,
@@ -114,10 +138,12 @@ def main() -> None:
         start = time.perf_counter()
         for batch in loader:
             batch = {
-                key: value.to(device) if torch.is_tensor(value) else value
+                key: value.to(device, non_blocking=True)
+                if torch.is_tensor(value) else value
                 for key, value in batch.items()
             }
-            prediction = model(batch["images"], batch["keypoints_2d"])
+            with torch.autocast(device_type=device.type, enabled=use_amp):
+                prediction = model(batch["images"], batch["keypoints_2d"])
             total_mae += root_relative_depth_mae_mm(
                 prediction, batch["target_depth"], batch["valid_mask"]
             ).item()

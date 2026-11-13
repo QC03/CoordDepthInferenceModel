@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Dict, Optional
 import numpy as np
 
-from ..data.dataset import ensure_pose_model
+from ..data.pose_detector import RTMLibPoseDetector
 from .filtering import OneEuroFilter
 
 
@@ -68,13 +68,11 @@ def _draw_skeleton_projection(points: np.ndarray, depths: np.ndarray,
     return canvas
 
 
-def run_video(path: Optional[str], onnx_model: str, pose_model: str = None,
+def run_video(path: Optional[str], onnx_model: str,
+              pose_mode: str = "lightweight", pose_device: str = "auto",
               camera_index: int = 0) -> None:
     import cv2
-    import mediapipe as mp
     import onnxruntime as ort
-    from mediapipe.tasks import python
-    from mediapipe.tasks.python import vision
 
     use_webcam = path is None or not Path(path).is_file()
     source = camera_index if use_webcam else path
@@ -85,26 +83,19 @@ def run_video(path: Optional[str], onnx_model: str, pose_model: str = None,
     cap = cv2.VideoCapture(source)
     if not cap.isOpened():
         raise RuntimeError(f"Could not open {'webcam' if use_webcam else path}")
-    pose_options = vision.PoseLandmarkerOptions(
-        base_options=python.BaseOptions(
-            model_asset_path=str(ensure_pose_model(pose_model))),
-        running_mode=vision.RunningMode.IMAGE,
-        num_poses=1,
-    )
-    detector = vision.PoseLandmarker.create_from_options(pose_options)
+    detector = RTMLibPoseDetector(pose_mode, pose_device)
     session = ort.InferenceSession(
-        onnx_model, providers=["CPUExecutionProvider"])
+        onnx_model,
+        providers=["CUDAExecutionProvider", "CPUExecutionProvider"],
+    )
     filters: Dict[int, OneEuroFilter] = {}
-    mp_indices = [0, 11, 12, 13, 14, 15, 16, 23, 24, 25, 26, 27, 28, 31, 32]
     while True:
         ok, frame = cap.read()
         if not ok:
             break
         timestamp = time.monotonic()
-        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        result = detector.detect(
-            mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb))
-        if not result.pose_landmarks:
+        points, valid = detector.detect(frame)
+        if not valid.any():
             for f in filters.values():
                 f.reset()
             display = cv2.resize(frame, (640, 480))
@@ -117,15 +108,7 @@ def run_video(path: Optional[str], onnx_model: str, pose_model: str = None,
             if cv2.waitKey(1) & 0xFF == ord("q"):
                 break
             continue
-        landmarks = result.pose_landmarks[0]
-        points = np.array([(landmarks[i].x, landmarks[i].y)
-                           for i in mp_indices], dtype=np.float32)
-        valid = np.array([
-            landmarks[i].visibility >= 0.5
-            and 0 <= landmarks[i].x <= 1
-            and 0 <= landmarks[i].y <= 1
-            for i in mp_indices
-        ], dtype=bool)
+        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         safe_points = points.copy()
         valid_root = valid[7] and valid[8]
         if valid_root:
@@ -164,7 +147,12 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("video", nargs="?", default=None)
     parser.add_argument("--onnx", default="depth_lifting.onnx")
-    parser.add_argument("--pose-model")
+    parser.add_argument("--pose-mode", choices=("lightweight", "balanced",
+                                                 "performance"),
+                        default="lightweight")
+    parser.add_argument("--pose-device", choices=("auto", "cuda", "cpu"),
+                        default="auto")
     parser.add_argument("--camera-index", type=int, default=0)
     args = parser.parse_args()
-    run_video(args.video, args.onnx, args.pose_model, args.camera_index)
+    run_video(args.video, args.onnx, args.pose_mode, args.pose_device,
+              args.camera_index)

@@ -4,9 +4,9 @@ torchvision==0.26.0+cu128
 
 --extra-index-url https://pypi.org/simple
 numpy>=1.24
-mediapipe>=0.10
+rtmlib>=0.0.16
 opencv-python>=4.8
 onnx>=1.14
-onnxruntime>=1.16
+onnxruntime-gpu>=1.16
 onnxscript>=0.7
 tqdm>=4.66

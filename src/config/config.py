@@ -4,10 +4,10 @@ from typing import Dict, Tuple
 
 @dataclass(frozen=True)
 class JointMapping:
-    """Explicit MediaPipe/H36M correspondence. Indices not listed are invalid."""
+    """Explicit rtmlib/H36M correspondence. Unlisted indices are invalid."""
 
-    mediapipe_to_h36m: Dict[int, int]
-    mediapipe_names: Tuple[str, ...]
+    rtmlib_to_h36m: Dict[int, int]
+    rtmlib_names: Tuple[str, ...]
     h36m_names: Tuple[str, ...]
     left_hip: int
     right_hip: int
@@ -15,20 +15,19 @@ class JointMapping:
 
     @property
     def num_joints(self) -> int:
-        return len(self.mediapipe_names)
+        return len(self.rtmlib_names)
 
     @classmethod
     def h36m25_default(cls) -> "JointMapping":
-        # MediaPipe indices follow the 33-landmark BlazePose convention.
-        names = tuple(f"mp_{i}" for i in range(33))
+        names = tuple(f"rtmlib_{i}" for i in range(26))
         h36m = tuple(f"h36m_{i}" for i in range(25))
         mapping = {
-            0: 9, 11: 11, 12: 14, 13: 12, 14: 15, 15: 13, 16: 16,
-            23: 4, 24: 1, 25: 5, 26: 2, 27: 6, 28: 3,
-            31: 17, 32: 18,
+            0: 9, 5: 11, 6: 14, 7: 12, 8: 15, 9: 13, 10: 16,
+            11: 4, 12: 1, 13: 5, 14: 2, 15: 6, 16: 3,
+            20: 17, 23: 18,
         }
         return cls(mapping, names, h36m, left_hip=4, right_hip=1,
-                   excluded=tuple(i for i in range(33) if i not in mapping))
+               excluded=tuple(i for i in range(26) if i not in mapping))
 
 
 @dataclass(frozen=True)
