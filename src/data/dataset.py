@@ -90,7 +90,8 @@ class VideoHuman36MDataset(Dataset):
         if frame_stride < 1:
             raise ValueError("frame_stride must be at least 1")
         self._pose_detector = RTMLibPoseDetector(pose_mode, pose_device)
-        self._captures = {}
+        self._capture = None
+        self._capture_path = None
         self.left_hip, self.right_hip = left_hip, right_hip
         self.samples = []
         self.labels: Dict[str, torch.Tensor] = {}
@@ -137,18 +138,9 @@ class VideoHuman36MDataset(Dataset):
         import numpy as np
 
         video_path, label_path, frame_index = self.samples[index]
-        capture = self._captures.get(video_path)
-        if capture is None or not capture.isOpened():
-            capture = cv2.VideoCapture(video_path)
-            self._captures[video_path] = capture
-        capture.set(cv2.CAP_PROP_POS_FRAMES, frame_index)
-        ok, frame = capture.read()
-        if not ok:
-            capture.release()
-            self._captures.pop(video_path, None)
-            raise RuntimeError(
-                f"Could not read frame {frame_index} from {video_path}"
-            )
+        frame = self._read_video_frame(
+            cv2, video_path, frame_index
+        )
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         keypoints, valid = self._pose_detector.detect(frame)
         image = (cv2.resize(rgb, (224, 224)).astype(np.float32) / 255.0)
@@ -168,6 +160,35 @@ class VideoHuman36MDataset(Dataset):
             "target_depth": target,
             "valid_mask": torch.from_numpy(valid),
         }
+
+    def _read_video_frame(self, cv2, video_path: str,
+                          frame_index: int):
+        for attempt in range(2):
+            if self._capture_path != video_path:
+                self._release_capture()
+            capture = self._capture
+            if capture is None or not capture.isOpened():
+                capture = cv2.VideoCapture(video_path)
+                self._capture = capture
+                self._capture_path = video_path
+            capture.set(cv2.CAP_PROP_POS_FRAMES, frame_index)
+            ok, frame = capture.read()
+            if ok:
+                return frame
+
+            self._release_capture()
+            if attempt == 0:
+                continue
+        raise RuntimeError(
+            f"Could not read frame {frame_index} from {video_path} "
+            "after reopening the video capture"
+        )
+
+    def _release_capture(self) -> None:
+        if self._capture is not None:
+            self._capture.release()
+        self._capture = None
+        self._capture_path = None
 
     def _load_camera_parameters(
         self, action: str, camera_id: str, subject_root: Path

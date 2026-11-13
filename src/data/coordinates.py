@@ -55,14 +55,19 @@ def h36m_root_relative(points: torch.Tensor, left_hip: int,
 
 def world_to_camera(points: torch.Tensor, rotation: torch.Tensor,
                     translation: torch.Tensor) -> torch.Tensor:
-    """Transform points with camera extrinsics: P_cam = R @ P_world + T."""
+    """Transform world points using camera center extrinsics.
+
+    The dataset stores ``translation`` as the camera center in world
+    coordinates, so the camera-space transform is ``P_cam = R @ (P_world -
+    C)``.
+    """
     if points.shape[-1] != 3:
         raise ValueError("points must have a final dimension of 3")
     rotation = rotation.to(device=points.device, dtype=points.dtype)
     translation = translation.to(device=points.device, dtype=points.dtype)
     if rotation.shape != (3, 3) or translation.shape != (3,):
         raise ValueError("rotation must be [3,3] and translation must be [3]")
-    return torch.matmul(points, rotation.transpose(0, 1)) + translation
+    return torch.matmul(points - translation, rotation.transpose(0, 1))
 
 
 def crop_box_from_bbox(xyxy: Tuple[float, float, float, float],

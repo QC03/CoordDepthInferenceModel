@@ -7,6 +7,7 @@ numpy>=1.24
 rtmlib>=0.0.16
 opencv-python>=4.8
 onnx>=1.14
-onnxruntime-gpu>=1.16
+# 1.27+ defaults to CUDA 13, while the PyTorch build above uses CUDA 12.8.
+onnxruntime-gpu==1.26.0
 onnxscript>=0.7
 tqdm>=4.66

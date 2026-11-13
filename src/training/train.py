@@ -2,7 +2,7 @@ import argparse
 import time
 from pathlib import Path
 import torch
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Subset
 from tqdm import tqdm
 
 from ..config.config import PoseConfig
@@ -50,6 +50,7 @@ def main() -> None:
     parser.add_argument("--epochs", type=int, default=1)
     parser.add_argument("--frame-stride", type=int, default=1)
     parser.add_argument("--max-samples", type=int)
+    parser.add_argument("--eval-max-samples", type=int, default=100)
     parser.add_argument("--batch-size", type=int, default=8)
     parser.add_argument("--num-workers", type=int, default=2)
     parser.add_argument("--pose-mode", choices=("lightweight", "balanced",
@@ -66,6 +67,8 @@ def main() -> None:
         parser.error("--batch-size must be at least 1")
     if args.num_workers < 0:
         parser.error("--num-workers must be non-negative")
+    if args.eval_max_samples < 1:
+        parser.error("--eval-max-samples must be at least 1")
     device = _select_device(args.device)
     print(f"device={device}")
     config = PoseConfig()
@@ -132,11 +135,21 @@ def main() -> None:
     export_model(model, args.onnx_output)
     print(f"saved ONNX model: {args.onnx_output}")
     model.eval()
+    eval_size = min(args.eval_max_samples, len(dataset))
+    eval_dataset = Subset(dataset, range(eval_size))
+    eval_options = dict(loader_options)
+    eval_options["shuffle"] = False
+    eval_loader = DataLoader(eval_dataset, **eval_options)
+    print(f"evaluating samples={eval_size}")
     total_mae = 0.0
     evaluated_batches = 0
     with torch.no_grad():
         start = time.perf_counter()
-        for batch in loader:
+        eval_progress = tqdm(
+            eval_loader, total=len(eval_loader), desc="evaluation",
+            unit="batch"
+        )
+        for batch in eval_progress:
             batch = {
                 key: value.to(device, non_blocking=True)
                 if torch.is_tensor(value) else value
@@ -148,7 +161,8 @@ def main() -> None:
                 prediction, batch["target_depth"], batch["valid_mask"]
             ).item()
             evaluated_batches += 1
-        elapsed = (time.perf_counter() - start) / max(len(loader), 1)
+        eval_progress.close()
+        elapsed = (time.perf_counter() - start) / max(len(eval_loader), 1)
     mae = total_mae / max(evaluated_batches, 1)
     print(f"mean_mae_mm={mae:.3f} inference_ms={elapsed * 1000:.3f}")
 
